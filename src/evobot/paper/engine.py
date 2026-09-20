@@ -22,6 +22,7 @@ from evobot.fitness import rank_population, reset_cadence_windows, window_fitnes
 from evobot.models import Organism, SignalAction
 from evobot.risk import RiskConfig, RiskManager
 from evobot.strategies import generate_signal
+from evobot.jev_runtime import JevRuntime
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,8 @@ class PaperState:
     n_fills: int = 0
     last_evolve: Optional[dict[str, Any]] = None
     poll_count: int = 0
+    jev_calls: int = 0
+    last_jev: Optional[dict[str, Any]] = None
 
 
 class PaperEngine:
@@ -67,6 +70,7 @@ class PaperEngine:
         self.broker = PaperBroker(self.risk, self.fees, self.risk_cfg)
         self.rng = random.Random(rng_seed)
         self.state = PaperState(organisms=seed_colony(n_organisms, starting_cash=self.evo_cfg.starting_cash))
+        self.jev = JevRuntime(self.data_dir)
         self.pop_path = self.data_dir / "population.json"
         self.cadence_log = self.data_dir / "cadences.jsonl"
         self.trades_log = self.data_dir / "trades.jsonl"
@@ -165,14 +169,26 @@ class PaperEngine:
         fills_this = 0
         open_count = sum(1 for o in self.state.organisms if o.position.qty != 0)
 
+        signal_rows: list[dict[str, Any]] = []
         for org in self.state.organisms:
             sig = generate_signal(org, prices, now)
             org.last_signal = sig.action
-            if sig.action == SignalAction.HOLD:
-                continue
             is_close = (org.position.qty > 0 and sig.action == SignalAction.SELL) or (
                 org.position.qty < 0 and sig.action == SignalAction.BUY
             )
+            if sig.action != SignalAction.HOLD:
+                signal_rows.append(
+                    {
+                        "org_id": org.id,
+                        "action": sig.action.value,
+                        "strength": sig.strength,
+                        "reason": sig.reason,
+                        "is_close": is_close,
+                    }
+                )
+            if sig.action == SignalAction.HOLD:
+                continue
+            # Inv 1: closes are never gated by edge / Jev. Opens may soft-skip on fees.
             if not is_close and not passes_min_edge_gate(
                 size_usd=org.genome.size_usd, strength=sig.strength, fees=self.fees
             ):
@@ -195,6 +211,26 @@ class PaperEngine:
                 self._log_trade(org, fill, mid)
 
         self.state.poll_count += 1
+        # Log-only Jev: on signal or sparse. Never gates exits / never sizes from Score.
+        jev_info = self.jev.maybe_judge(
+            now=now,
+            prices=prices,
+            symbol=symbol,
+            poll_count=self.state.poll_count,
+            signals=signal_rows,
+        )
+        if jev_info and not jev_info.get("error"):
+            self.state.jev_calls += 1
+            self.state.last_jev = {
+                "model": jev_info.get("model_v"),
+                "mocked": jev_info.get("mocked"),
+                "trigger": jev_info.get("trigger"),
+                "bar_ts": jev_info.get("bar_ts"),
+                "answers": jev_info.get("answers"),
+                "arm_with_jev": jev_info.get("arm_with_jev"),
+                "arm_without_jev": jev_info.get("arm_without_jev"),
+                "cost": (jev_info.get("usage") or {}).get("cost"),
+            }
         self.state.last_step_at = now
         evolved = None
         elapsed = (now - self.state.cadence_started_at).total_seconds()
@@ -209,6 +245,7 @@ class PaperEngine:
             "elapsed_sec": elapsed,
             "evolved": evolved,
             "n_organisms": len(self.state.organisms),
+            "jev": self.state.last_jev if jev_info else None,
         }
 
     def _evolve(self, now: datetime) -> dict[str, Any]:
@@ -308,6 +345,7 @@ class PaperEngine:
             row["theory_bullets"] = theory_bullets(row)
             row["theory_body"] = theory_body(row)
             rows.append(row)
+        jev_stats = self.jev.stats_for_snapshot()
         return {
             "cadence_index": self.state.cadence_index,
             "n_evolves": self.state.n_evolves,
@@ -322,6 +360,9 @@ class PaperEngine:
             "last_step_at": self.state.last_step_at.isoformat() if self.state.last_step_at else None,
             "last_evolve": self.state.last_evolve,
             "organisms": rows,
+            "jev_calls": self.state.jev_calls,
+            "last_jev": self.state.last_jev,
+            "jev": jev_stats,
         }
 
 

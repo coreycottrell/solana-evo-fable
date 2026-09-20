@@ -132,7 +132,11 @@ def _load_env_file(path: Path) -> None:
 
 
 def resolve_api_key(*, project_root: Optional[Path] = None) -> Optional[str]:
-    """Return OPENROUTER_API_KEY from env or project .env; never log it."""
+    """Return OPENROUTER_API_KEY from env or project/.env; never log it.
+
+    Also loads sibling ``solana-evo-bot/.env`` (shared OpenRouter key) when the
+    fable tree has no key of its own — secrets stay gitignored / uncommitted.
+    """
     key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if key:
         return key
@@ -142,13 +146,25 @@ def resolve_api_key(*, project_root: Optional[Path] = None) -> Optional[str]:
     roots.append(Path.cwd())
     # package → src → project root
     here = Path(__file__).resolve()
-    roots.append(here.parents[2])
+    fable_root = here.parents[2]
+    roots.append(fable_root)
+    # Shared v1 key (same box A/B arm) — do not commit.
+    roots.append(fable_root.parent / "solana-evo-bot")
     for root in roots:
         _load_env_file(root / ".env")
         key = os.environ.get("OPENROUTER_API_KEY", "").strip()
         if key:
             return key
     return None
+
+
+def jev_mock_default() -> bool:
+    """True only when explicitly forced or when no API key is available."""
+    if os.environ.get("EVO_BOT_JEV_MOCK", "").strip() == "1":
+        return True
+    if os.environ.get("EVO_BOT_JEV_MOCK", "").strip() == "0":
+        return False
+    return not bool(resolve_api_key())
 
 
 def _mock_answers(questions: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -242,8 +258,18 @@ class JevClient:
         self.endpoint = ep
         self.timeout_sec = float(timeout_sec)
         self._project_root = project_root
-        env_mock = os.environ.get("EVO_BOT_JEV_MOCK", "0") == "1"
-        self._force_mock = bool(force_mock) if force_mock is not None else env_mock
+        if force_mock is not None:
+            self._force_mock = bool(force_mock)
+        else:
+            # Explicit EVO_BOT_JEV_MOCK=1 forces mock; =0 forces live (key required).
+            # Unset → mock only when no key is resolvable.
+            flag = os.environ.get("EVO_BOT_JEV_MOCK", "").strip()
+            if flag == "1":
+                self._force_mock = True
+            elif flag == "0":
+                self._force_mock = False
+            else:
+                self._force_mock = False  # key absence still yields mock_mode
         self._api_key = api_key  # may be None; resolved lazily
         self._resolved_key: Optional[str] = None
 

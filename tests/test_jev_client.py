@@ -41,3 +41,22 @@ def test_mock_decide_deterministic_no_network(monkeypatch: pytest.MonkeyPatch):
     assert r1.answers == r2.answers
     assert "toxic_flow" in r1.answers
     assert r1.answers["toxic_flow"]["type"] == "noul"
+
+
+def test_mock_off_when_key_and_flag_zero(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test-not-real")
+    monkeypatch.setenv("EVO_BOT_JEV_MOCK", "0")
+    client = JevClient()
+    assert client.mock_mode is False
+
+
+def test_mock_when_no_key(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("EVO_BOT_JEV_MOCK", raising=False)
+    # prevent loading real .env from disk
+    monkeypatch.setattr(
+        "evobot.jev_client.resolve_api_key",
+        lambda **kwargs: None,
+    )
+    client = JevClient()
+    assert client.mock_mode is True

@@ -17,10 +17,18 @@ This repository is the **v2 / Fable** paper-only laboratory for A/B testing agai
 
 ## Status
 
-- MISSION + invariant tests scaffolded (some xfail until models/dashboard/risk land).
+- MISSION + invariant tests (market-only state, question labels, both-arms logging).
 - AS-IS transplants from v1 `@ 322a88f`: `price_pool`, `price_backfill`, `jev_client` (+ fee math leaf in `fees.py`).
-- `load_bars(..., sources=...)` filter (F6). Synthetic ticks rejected on append (invariant 4).
-- Wall clock banned outside `live/` (invariant 2); `append_tick` requires injected `ts=`.
+- **v2 Jev (log-only):** market-bucket state encoder, versioned `core_v1` questions with declared labels,
+  judgment store under `data/judgments/`, paper poll calls on signal/sparse, both arms logged.
+  Exits never gated by Jev. Dashboard `:8766` shows last Jev / call count / cost.
+- `OPENROUTER_API_KEY` via symlink to v1 `.env` (gitignored). Mock off when key present.
+- Wall clock banned outside `live/` (invariant 2).
+
+```bash
+python -m evobot --jev-once          # one live Decisions call
+python -m evobot --paper --dashboard --port 8766
+```
 
 Audit pack + v1 repro scripts: [`docs/audit/`](docs/audit/). Evidence tags: [`docs/EVIDENCE.md`](docs/EVIDENCE.md).
 
@@ -47,7 +55,7 @@ pytest -q
 cd /workspace/solana-evo-fable
 source .venv/bin/activate
 export EVO_BOT_V2_DATA_DIR=/workspace/solana-evo-fable/data
-export EVO_BOT_JEV_MOCK=1   # or share OPENROUTER_API_KEY (Jev allowlist still enforced)
+# EVO_BOT_JEV_MOCK defaults off when OPENROUTER_API_KEY is resolvable (symlink .env from v1)
 pytest -q
 # later: uvicorn / dashboard on :8766
 ```

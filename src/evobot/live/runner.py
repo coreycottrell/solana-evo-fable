@@ -106,3 +106,41 @@ def _start_dashboard(engine: PaperEngine, port: int) -> Any:
     t.start()
     log.info("dashboard http://127.0.0.1:%s", port)
     return t
+
+
+def run_jev_once_cli(*, symbol: str = "SOL", bar_lookback: int = 120) -> int:
+    """Wall-clock CLI entry for --jev-once (lives in live/ for inv 2)."""
+    import json
+
+    from evobot.jev_runtime import run_jev_once
+
+    root = data_dir()
+    pool = PricePool(price_pool_dir())
+    ticks = pool.load_ticks(symbol, limit=max(bar_lookback * 2, 300))
+    mids = [float(t["mid"]) for t in ticks if t.get("mid")]
+    now = _now()
+    log.info(
+        "jev-once data=%s ticks=%s mock_env=%s",
+        root,
+        len(mids),
+        __import__("os").environ.get("EVO_BOT_JEV_MOCK"),
+    )
+    out = run_jev_once(data_dir=root, prices=mids, now=now, symbol=symbol)
+    print(json.dumps({
+        "model": out.get("model_v"),
+        "mocked": out.get("mocked"),
+        "decision_id": out.get("decision_id"),
+        "cost": (out.get("usage") or {}).get("cost"),
+        "answers": out.get("answers"),
+        "arm_with_jev": out.get("arm_with_jev"),
+        "arm_without_jev": out.get("arm_without_jev"),
+        "trigger": out.get("trigger"),
+        "state_v": out.get("state_v"),
+        "question_v": out.get("question_v"),
+        "error": out.get("error"),
+    }, indent=2, default=str))
+    if out.get("error"):
+        return 1
+    if out.get("mocked"):
+        log.warning("jev-once returned MOCKED answers — set EVO_BOT_JEV_MOCK=0 and ensure OPENROUTER_API_KEY")
+    return 0
