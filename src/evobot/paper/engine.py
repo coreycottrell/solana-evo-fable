@@ -346,6 +346,21 @@ class PaperEngine:
             row["theory_body"] = theory_body(row)
             rows.append(row)
         jev_stats = self.jev.stats_for_snapshot()
+        cadence_history = self._read_cadence_history(limit=40)
+        ranks = [
+            {
+                "rank": i + 1,
+                "id": o.id,
+                "label": o.label,
+                "thesis": o.thesis_type.value,
+                "island": island_for_thesis(o.thesis_type),
+                "fitness": s,
+                "window_pnl": o.window.realized_pnl,
+                "window_trades": o.window.n_trades,
+                "generation": o.generation,
+            }
+            for i, (o, s) in enumerate(ranked)
+        ]
         return {
             "cadence_index": self.state.cadence_index,
             "n_evolves": self.state.n_evolves,
@@ -360,10 +375,31 @@ class PaperEngine:
             "last_step_at": self.state.last_step_at.isoformat() if self.state.last_step_at else None,
             "last_evolve": self.state.last_evolve,
             "organisms": rows,
+            "ranks": ranks,
+            "cadence_history": cadence_history,
             "jev_calls": self.state.jev_calls,
             "last_jev": self.state.last_jev,
             "jev": jev_stats,
         }
+
+    def _read_cadence_history(self, *, limit: int = 40) -> list[dict[str, Any]]:
+        """Newest-last tail of cadences.jsonl for the observer dashboard."""
+        if not self.cadence_log.exists():
+            return []
+        rows: list[dict[str, Any]] = []
+        try:
+            with open(self.cadence_log, encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        rows.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
+        except OSError:
+            return []
+        return rows[-limit:]
 
 
 def _org_to_dict(o: Organism) -> dict[str, Any]:

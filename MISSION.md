@@ -35,6 +35,50 @@ It is not a get-rich bot, a chat agent that picks coins, or a live wallet. v1 pr
 14. **Observers only observe.** The dashboard exposes GET routes only and opens data read-only. One process owns each state file.
    *Test:* `test_dashboard_has_no_mutating_routes`.
 
+---
+
+## What's running now (2026-09-20 ET)
+
+**A/B lab:** this repo is **fable / v2** on `:8766`. Sibling **v1** (`solana-evo-bot`) stays on `:8765` (paper pid ~382399, dashboard ~364939). Do not stop v1.
+
+### LIVE (working)
+
+| Piece | Status |
+|-------|--------|
+| Paper evolve colony | 8+ organisms, dual islands (trend / contrarian), poll ~90s |
+| Windowed fitness | Cadence-window realized PnL only (inv 12) — no lifetime turnover vs window |
+| Breed on cadence | Retire idle/worst → breed top parents → spawn child; default **14400s (4h)** |
+| Judgment store | `data/judgments/judgments.jsonl` + Jev ledger/stats under `data/` |
+| Live Jev (log-only) | OpenRouter key in **this** repo's `.env` (`chmod 600`); `EVO_BOT_JEV_MOCK=0`; answers logged, **no gate / no size from Score** (inv 6) |
+| Own dashboard | `http://127.0.0.1:8766` — colony boards, ranks, Jev panel, cadence history, GET export/pack |
+| Fills | Paper broker continues on shared SOL tape (`data/price_pool` → v1 pool) |
+
+### DEFERRED (not on the critical path yet)
+
+| Piece | Why deferred |
+|-------|----------------|
+| Lift report / Premium CI | Inv 6 combiner credit — needs scored labels + purged splits |
+| Learned combiner | Logistic/GBM over Jev columns vs numeric baseline |
+| Label factory (triple-barrier etc.) | Inv 5 ground truth from tape — library + computable labels first |
+| Text lane / multi-symbol universe | North-star breadth; paper SOL colony first |
+| Graveyard two-sided mining | Inv 13 enrichment with intervals |
+| Live champions holdout book | Inv 8 frozen champs — after lift exists |
+| Wallet / live signing | Explicitly never in this repo |
+
+### How to run paper (fable)
+
+```bash
+cd /workspace/solana-evo-fable
+source .venv/bin/activate
+export EVO_BOT_V2_DATA_DIR=/workspace/solana-evo-fable/data
+export EVO_BOT_JEV_MOCK=0
+python -m evobot --paper --cadence 14400 --poll 90 --dashboard --port 8766 -v
+```
+
+Prove live Jev: log line `mocked=False` / snapshot `jev.last_mocked: false` and `jev.n_live > 0`.
+Prove evolve: `data/cadences.jsonl` gains a retire→spawn row; log `evolve cadence=…`.
+
+
 ## Evidence standard
 
 Every claim in a report is tagged **MEASURED** (with the script that reproduces it) or **BELIEVED**. A status of "working" requires a MEASURED outcome, not a log line.
