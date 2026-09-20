@@ -1,25 +1,67 @@
-"""Invariant 1: exits are never gated (F1 — Jev/risk blocked stop-loss in v1)."""
+"""Invariant 1: exits are never gated."""
 
 from __future__ import annotations
 
-import importlib.util
+from datetime import datetime, timezone
+from pathlib import Path
 
-import pytest
+from evobot.broker import PaperBroker
+from evobot.fees import FeesConfig
+from evobot.models import Genome, Organism, Position, SignalAction, ThesisType
+from evobot.risk import RiskConfig, RiskManager
 
 
-def test_any_position_can_always_close():
-    """Any size, any price, kill switch on, adversarial Jev — close must succeed.
-
-    Documents F1 until the risk rewrite lands. Then this becomes a property test
-    over the fill/reducer path.
-    """
-    risk_spec = importlib.util.find_spec("evobot.risk")
-    broker_spec = importlib.util.find_spec("evobot.broker") or importlib.util.find_spec(
-        "evobot.paper_broker"
-    )
-    if risk_spec is None or broker_spec is None:
-        pytest.xfail(
-            "risk/broker rewrite not landed — F1: v1 risk.check_order vetoed closes; "
-            "v2 rule: risk blocks opens only; kill switch is reduce-only"
+def test_any_position_can_always_close(tmp_path: Path):
+    kill = tmp_path / "KILL"
+    kill.write_text("1")
+    risk = RiskManager(
+        RiskConfig(
+            kill_switch_path=str(kill),
+            max_notional_per_trade=1.0,  # would block opens
+            max_position_usd=1.0,
+            max_open_trades=0,
+            max_stale_data_sec=0.0,
         )
-    pytest.fail("risk/broker present but close-always property not implemented yet")
+    )
+    broker = PaperBroker(risk, FeesConfig(), risk.config)
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    org = Organism(
+        thesis_type=ThesisType.MOMENTUM,
+        genome=Genome(size_usd=100.0),
+        cash_usd=50.0,
+        position=Position(
+            mint="m",
+            symbol="SOL",
+            qty=1.5,
+            avg_entry=100.0,
+            opened_at=now,
+            side="long",
+        ),
+    )
+    # Adversarial: kill on, notional caps tiny, stale — close must still fill
+    fill = broker.execute(
+        org,
+        SignalAction.SELL,
+        mid=90.0,
+        symbol="SOL",
+        mint="m",
+        now=now,
+        data_age_sec=9999.0,
+        reason="stop",
+    )
+    assert fill is not None
+    assert fill.is_close
+    assert org.position.qty == 0.0
+
+
+def test_risk_blocks_open_when_kill_on(tmp_path: Path):
+    kill = tmp_path / "KILL"
+    kill.write_text("1")
+    risk = RiskManager(RiskConfig(kill_switch_path=str(kill)))
+    broker = PaperBroker(risk, FeesConfig(), risk.config)
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    org = Organism(thesis_type=ThesisType.MOMENTUM, cash_usd=2000.0)
+    fill = broker.execute(
+        org, SignalAction.BUY, mid=100.0, symbol="SOL", mint="m", now=now
+    )
+    assert fill is None
