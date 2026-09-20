@@ -16,7 +16,8 @@ from evobot.evolution import (
     select_retire_target,
     spawn_child,
 )
-from evobot.fees import FeesConfig, passes_min_edge_gate
+from evobot.evolution import build_heritage, island_for_thesis
+from evobot.fees import FeesConfig, passes_min_edge_gate, round_trip_fee_drag_bps
 from evobot.fitness import rank_population, reset_cadence_windows, window_fitness
 from evobot.models import Organism, SignalAction
 from evobot.risk import RiskConfig, RiskManager
@@ -224,6 +225,7 @@ class PaperEngine:
         )
         top2 = [ranked[0][0], ranked[1][0]] if len(ranked) >= 2 else [ranked[0][0], ranked[0][0]]
         child = spawn_child(top2[0], top2[1], cfg=self.evo_cfg, rng=self.rng)
+        heritage = getattr(child, "heritage", None) or build_heritage(top2[0], top2[1])
 
         # replace victim
         self.state.organisms = [o for o in self.state.organisms if o.id != victim.id] + [child]
@@ -236,6 +238,7 @@ class PaperEngine:
             "at": now.isoformat(),
             "retired": {"id": victim.id, "label": victim.label, "score": vscore, "why": why},
             "parents": [top2[0].id, top2[1].id],
+            "heritage": heritage,
             "child": {"id": child.id, "label": child.label, "thesis": child.thesis_type.value, "gen": child.generation},
             "ranked": [
                 {"id": o.id, "label": o.label, "fitness": s, "window_pnl": o.window.realized_pnl, "n_trades": o.window.n_trades}
@@ -276,7 +279,35 @@ class PaperEngine:
             f.write(json.dumps(row, default=str) + "\n")
 
     def snapshot(self) -> dict[str, Any]:
+        from evobot.dashboard import theory_body, theory_bullets
+
         ranked = rank_population(self.state.organisms)
+        rt_ref = round_trip_fee_drag_bps(100.0, self.fees)
+        rows = []
+        for o, _ in ranked:
+            g = o.genome.to_dict()
+            row = {
+                "id": o.id,
+                "label": o.label,
+                "thesis": o.thesis_type.value,
+                "island": island_for_thesis(o.thesis_type),
+                "generation": o.generation,
+                "fitness": window_fitness(o),
+                "window_pnl": o.window.realized_pnl,
+                "window_trades": o.window.n_trades,
+                "lifetime_pnl": o.realized_pnl,
+                "cash": o.cash_usd,
+                "pos_qty": o.position.qty,
+                "idle_cadences": o.idle_cadences,
+                "last_signal": o.last_signal.value if hasattr(o.last_signal, "value") else str(o.last_signal),
+                "size_usd": o.genome.size_usd,
+                "round_trip_fee_bps": round_trip_fee_drag_bps(o.genome.size_usd, self.fees),
+                "genome": g,
+                "parent_ids": list(o.parent_ids),
+            }
+            row["theory_bullets"] = theory_bullets(row)
+            row["theory_body"] = theory_body(row)
+            rows.append(row)
         return {
             "cadence_index": self.state.cadence_index,
             "n_evolves": self.state.n_evolves,
@@ -284,28 +315,13 @@ class PaperEngine:
             "poll_count": self.state.poll_count,
             "generation_max": self.state.generation_max,
             "cadence_sec": self.cadence_sec,
+            "round_trip_fee_bps_ref": rt_ref,
             "cadence_started_at": self.state.cadence_started_at.isoformat()
             if self.state.cadence_started_at
             else None,
             "last_step_at": self.state.last_step_at.isoformat() if self.state.last_step_at else None,
             "last_evolve": self.state.last_evolve,
-            "organisms": [
-                {
-                    "id": o.id,
-                    "label": o.label,
-                    "thesis": o.thesis_type.value,
-                    "generation": o.generation,
-                    "fitness": window_fitness(o),
-                    "window_pnl": o.window.realized_pnl,
-                    "window_trades": o.window.n_trades,
-                    "lifetime_pnl": o.realized_pnl,
-                    "cash": o.cash_usd,
-                    "pos_qty": o.position.qty,
-                    "idle_cadences": o.idle_cadences,
-                    "last_signal": o.last_signal.value if hasattr(o.last_signal, "value") else str(o.last_signal),
-                }
-                for o, _ in ranked
-            ],
+            "organisms": rows,
         }
 
 

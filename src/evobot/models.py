@@ -17,6 +17,7 @@ class ThesisType(str, Enum):
     MOMENTUM = "momentum"
     BREAKOUT = "breakout"
     LIQUIDITY_FADE = "liquidity_fade"
+    MICRO_TREND = "micro_trend"
 
 
 class SideBias(str, Enum):

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Optional
 
-from evobot.fees import FeesConfig
+from evobot.fees import FeesConfig, fee_components, fill_price as fees_fill_price
 from evobot.models import Organism, Position, SignalAction
 from evobot.risk import RiskConfig, RiskManager
 
@@ -25,16 +25,11 @@ class Fill:
 
 
 def fill_price(mid: float, side: str, slippage_bps: float) -> float:
-    slip = slippage_bps / 10_000.0
-    if side == "buy":
-        return mid * (1.0 + slip)
-    return mid * (1.0 - slip)
+    return fees_fill_price(mid, side, slippage_bps)
 
 
 def fee_total(notional_usd: float, fees: FeesConfig) -> float:
-    gas = float(fees.gas_usd_per_tx)
-    swap = float(notional_usd) * fees.swap_fee_bps / 10_000.0
-    return gas + swap
+    return fee_components(notional_usd, fees)[2]
 
 
 class PaperBroker:
